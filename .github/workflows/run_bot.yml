@@ -22,9 +22,12 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: DEBUG - List all files
+        run: ls -R
+
       - name: Run Trading Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.pyෂ්
+        run: python main.py
