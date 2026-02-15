@@ -13,7 +13,7 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-# Sticker ID (ඔයා දුන්න එක)
+# Sticker ID
 STICKER_ID = "CAACAgUAAxkBAAEQZgNpf0jTNnM9QwNCwqMbVuf-AAE0x5oAAvsKAAIWG_BWlMq--iOTVBE4BA"
 
 # Gemini Setup
@@ -58,7 +58,6 @@ async def analyze_with_gemini(symbol):
         img_15m = generate_chart_image(df_15m, f"{symbol} 15m")
         img_5m = generate_chart_image(df_5m, f"{symbol} 5m")
         
-        # Prompt එක යාවත්කාලීන කළා TP 4ක් ඉල්ලන්න
         prompt = """
         Role: Expert Crypto Trader.
         Task: Analyze charts for a HIGH PROBABILITY entry (Scalp/Day Trade).
@@ -74,8 +73,6 @@ async def analyze_with_gemini(symbol):
             "tp4": numeric_price,
             "reason": "Short reason"
         }
-        
-        Make sure TP1, TP2, TP3, TP4 are spaced out logically for taking profits.
         """
         
         from PIL import Image
@@ -87,51 +84,44 @@ async def analyze_with_gemini(symbol):
         print(f"Analysis Error: {e}")
         return None
 
-# --- 4. TELEGRAM SENDER (With Sticker & New Format) ---
+# --- 4. TELEGRAM SENDER ---
 async def send_formatted_signal(coin, data):
     bot = Bot(token=TELEGRAM_TOKEN)
-    
     try:
-        # 1. Sticker එක යැවීම
-        print("Sending Sticker...")
+        # Sticker
         await bot.send_sticker(chat_id=CHANNEL_ID, sticker=STICKER_ID)
-        
-        # 2. තත්පර 5ක් රැඳී සිටීම
-        print("Waiting 5 seconds...")
         await asyncio.sleep(5)
         
-        # 3. Data සකස් කිරීම
+        # Data Prep
         decision = data.get('decision', 'WAIT').upper()
         entry = float(data.get('entry', 0))
         sl = float(data.get('stop_loss', 0))
         
-        # TPs (Gemini එව්වේ නැත්නම් entry එකෙන් හදාගන්නවා error එන එක නවත්තන්න)
-        tp1 = float(data.get('tp1', entry * 1.01))
-        tp2 = float(data.get('tp2', entry * 1.02))
-        tp3 = float(data.get('tp3', entry * 1.03))
-        tp4 = float(data.get('tp4', entry * 1.04))
+        if entry == 0: return
 
-        # Direction Emoji
+        tp1 = float(data.get('tp1', entry * (1.01 if decision == "BUY" else 0.99)))
+        tp2 = float(data.get('tp2', entry * (1.02 if decision == "BUY" else 0.98)))
+        tp3 = float(data.get('tp3', entry * (1.03 if decision == "BUY" else 0.97)))
+        tp4 = float(data.get('tp4', entry * (1.04 if decision == "BUY" else 0.96)))
+
         if decision == "SELL":
             direction_txt = "🔴Short"
         else:
             direction_txt = "🟢Long"
             
-        # Percentage Calculation (50x Leverage)
         def get_perc(price):
             if entry == 0: return 0.0
             val = abs(price - entry) / entry * 100 * 50
             return round(val, 1)
 
-        # RR Calculation
         risk = abs(entry - sl)
         reward = abs(entry - tp4)
         rr = round(reward / risk, 1) if risk > 0 else 0
+        coin_display = coin.replace('/USDT', ' USDT')
 
-        # 4. Message Format (ඔයා දුන්න විදිහටම)
         msg = f"""💎CRYPTO CAMPUS VIP💎
 
-🌑 {coin.replace('/USDT', ' USDT')}
+🌑 {coin_display}
 
 {direction_txt}
 
@@ -153,7 +143,6 @@ async def send_formatted_signal(coin, data):
 
 ⚠️ Margin Use 1%-5%(Trading Plan Use)"""
 
-        # 5. Message එක යැවීම
         await bot.send_message(chat_id=CHANNEL_ID, text=msg)
         print(f"✅ Signal sent for {coin}")
         
@@ -164,6 +153,7 @@ async def send_formatted_signal(coin, data):
 async def main():
     candidates = get_top_candidates()
     
+    # 1. මාකට් එක Analyze කරනවා
     for coin in candidates:
         try:
             analysis_text = await analyze_with_gemini(coin)
@@ -176,16 +166,22 @@ async def main():
             except:
                 continue
             
-            # Decision Check
             decision = data.get('decision', 'WAIT')
             print(f"{coin}: {decision}")
             
             if decision != "WAIT":
-                # Signal එක යවන්න අලුත් Function එකට යවනවා
                 await send_formatted_signal(coin, data)
                 
         except Exception as e:
             print(f"Loop Error {coin}: {e}")
+
+    # 2. වැඩේ ඉවර වුණාම Status Update එක යවනවා
+    try:
+        bot = Bot(token=TELEGRAM_TOKEN)
+        await bot.send_message(chat_id=CHANNEL_ID, text="මම ඉන්නවා තුමනි 🫡")
+        print("✅ Status Update Sent!")
+    except Exception as e:
+        print(f"Status Error: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
