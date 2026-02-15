@@ -5,6 +5,7 @@ import google.generativeai as genai
 import asyncio
 import os
 import io
+import json
 from telegram import Bot
 
 # --- CONFIGURATION (Secrets වලින් දත්ත ගනී) ---
@@ -12,11 +13,14 @@ GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+# Sticker ID (ඔයා දුන්න එක)
+STICKER_ID = "CAACAgUAAxkBAAEQZgNpf0jTNnM9QwNCwqMbVuf-AAE0x5oAAvsKAAIWG_BWlMq--iOTVBE4BA"
+
 # Gemini Setup
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash-exp') # හෝ gemini-1.5-flash
+model = genai.GenerativeModel('gemini-2.0-flash-exp') 
 
-# Binance Setup (Public Data)
+# Binance Setup
 exchange = ccxt.binance()
 
 # --- 1. DATA COLLECTION & CHARTING ---
@@ -29,126 +33,159 @@ def get_market_data(symbol, timeframe, limit=100):
 
 def generate_chart_image(df, title):
     buf = io.BytesIO()
-    # SMC පෙනුමට Chart එක (Grid ඉවත් කර, Colors වෙනස් කර)
     s = mpf.make_mpf_style(base_mpf_style='charles', gridstyle='', y_on_right=False)
     mpf.plot(df, type='candle', volume=True, title=title, style=s, savefig=buf)
     buf.seek(0)
     return buf
 
-# --- 2. THE PYTHON FILTER (Candidates තෝරාගැනීම) ---
+# --- 2. TARGET LIST (Top 5 Coins) ---
 def get_top_candidates():
-    # වෙලාව ඉතිරි කරගන්න අපි Top 20 Coins විතරක් බලමු දැනට
-    symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 
-               'ADA/USDT', 'AVAX/USDT', 'DOGE/USDT', 'TRX/USDT', 'LINK/USDT',
-               'DOT/USDT', 'MATIC/USDT', 'LTC/USDT', 'BCH/USDT', 'UNI/USDT']
-    
-    candidates = []
-    print("🔍 Scanning Market for Sweeps...")
-    
-    for sym in symbols:
-        try:
-            # 1H Chart එකේ විතරක් ඉක්මන් check එකක් දානවා
-            df = get_market_data(sym, '1h', limit=50)
-            
-            # Logic: අන්තිම Candle එකේ ලොකු Wick එකක් තියෙනවද? (Potential Sweep)
-            last_candle = df.iloc[-1]
-            body_size = abs(last_candle['close'] - last_candle['open'])
-            wick_size = (last_candle['high'] - last_candle['low']) - body_size
-            
-            # Wick එක Body එක වගේ දෙගුණයක් නම්, ඒක Sweep එකක් වෙන්න පුළුවන්
-            if wick_size > (body_size * 2):
-                candidates.append(sym)
-                print(f"Found Candidate: {sym}")
-                
-        except Exception as e:
-            continue
-            
-    return candidates[:5] # උපරිම 5යි ගන්නේ (Rate Limit හින්දා)
+    targets = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']
+    print(f"🎯 Targeting: {targets}")
+    return targets
 
-# --- 3. THE GEMINI "EYE" ---
+# --- 3. GEMINI ANALYSIS ---
 async def analyze_with_gemini(symbol):
-    print(f"🤖 Analyzing {symbol} with Gemini...")
-    
-    # Timeframes 4ටම Data ගන්නවා
-    df_4h = get_market_data(symbol, '4h')
-    df_1h = get_market_data(symbol, '1h')
-    df_15m = get_market_data(symbol, '15m')
-    df_5m = get_market_data(symbol, '5m')
-    
-    # Images හදනවා
-    img_4h = generate_chart_image(df_4h, f"{symbol} 4H")
-    img_1h = generate_chart_image(df_1h, f"{symbol} 1H")
-    img_15m = generate_chart_image(df_15m, f"{symbol} 15m")
-    img_5m = generate_chart_image(df_5m, f"{symbol} 5m")
-    
-    # Prompt එක (SMC Strategy)
-    prompt = """
-    Role: Expert Crypto Trader using "5-D Fusion Strategy" (ICT + Malaysian SnR).
-    Task: Analyze these 4 charts (4H, 1H, 15m, 5m) for a perfect sniper entry.
-    
-    Strategy Rules:
-    1. Trend: Identify 4H direction.
-    2. The Raid: Look for Liquidity Sweep (SSL/BSL) on 1H/15m.
-    3. Confirmation: Look for QML Pattern + MSS on 5m.
-    4. Entry: Overlap of ICT FVG + Malaysian MPL.
-    
-    Output JSON ONLY:
-    {
-        "decision": "BUY_LIMIT" or "SELL_LIMIT" or "WAIT",
-        "entry": price,
-        "stop_loss": price,
-        "tp1": price,
-        "reason": "Short summary of the setup"
-    }
-    """
-    
-    # පින්තූර 4ම යවනවා (Pillow හරහා load කරලා)
-    from PIL import Image
-    images = [Image.open(img_4h), Image.open(img_1h), Image.open(img_15m), Image.open(img_5m)]
-    
-    response = model.generate_content([prompt, *images])
-    return response.text
+    print(f"🤖 Analyzing {symbol}...")
+    try:
+        df_4h = get_market_data(symbol, '4h')
+        df_1h = get_market_data(symbol, '1h')
+        df_15m = get_market_data(symbol, '15m')
+        df_5m = get_market_data(symbol, '5m')
+        
+        img_4h = generate_chart_image(df_4h, f"{symbol} 4H")
+        img_1h = generate_chart_image(df_1h, f"{symbol} 1H")
+        img_15m = generate_chart_image(df_15m, f"{symbol} 15m")
+        img_5m = generate_chart_image(df_5m, f"{symbol} 5m")
+        
+        # Prompt එක යාවත්කාලීන කළා TP 4ක් ඉල්ලන්න
+        prompt = """
+        Role: Expert Crypto Trader.
+        Task: Analyze charts for a HIGH PROBABILITY entry (Scalp/Day Trade).
+        
+        Output JSON ONLY with these exact keys:
+        {
+            "decision": "BUY" or "SELL" or "WAIT",
+            "entry": numeric_price,
+            "stop_loss": numeric_price,
+            "tp1": numeric_price,
+            "tp2": numeric_price,
+            "tp3": numeric_price,
+            "tp4": numeric_price,
+            "reason": "Short reason"
+        }
+        
+        Make sure TP1, TP2, TP3, TP4 are spaced out logically for taking profits.
+        """
+        
+        from PIL import Image
+        images = [Image.open(img_4h), Image.open(img_1h), Image.open(img_15m), Image.open(img_5m)]
+        
+        response = model.generate_content([prompt, *images])
+        return response.text
+    except Exception as e:
+        print(f"Analysis Error: {e}")
+        return None
 
-# --- 4. TELEGRAM SENDER ---
-async def send_signal(message):
+# --- 4. TELEGRAM SENDER (With Sticker & New Format) ---
+async def send_formatted_signal(coin, data):
     bot = Bot(token=TELEGRAM_TOKEN)
-    await bot.send_message(chat_id=CHANNEL_ID, text=message)
+    
+    try:
+        # 1. Sticker එක යැවීම
+        print("Sending Sticker...")
+        await bot.send_sticker(chat_id=CHANNEL_ID, sticker=STICKER_ID)
+        
+        # 2. තත්පර 5ක් රැඳී සිටීම
+        print("Waiting 5 seconds...")
+        await asyncio.sleep(5)
+        
+        # 3. Data සකස් කිරීම
+        decision = data.get('decision', 'WAIT').upper()
+        entry = float(data.get('entry', 0))
+        sl = float(data.get('stop_loss', 0))
+        
+        # TPs (Gemini එව්වේ නැත්නම් entry එකෙන් හදාගන්නවා error එන එක නවත්තන්න)
+        tp1 = float(data.get('tp1', entry * 1.01))
+        tp2 = float(data.get('tp2', entry * 1.02))
+        tp3 = float(data.get('tp3', entry * 1.03))
+        tp4 = float(data.get('tp4', entry * 1.04))
+
+        # Direction Emoji
+        if decision == "SELL":
+            direction_txt = "🔴Short"
+        else:
+            direction_txt = "🟢Long"
+            
+        # Percentage Calculation (50x Leverage)
+        def get_perc(price):
+            if entry == 0: return 0.0
+            val = abs(price - entry) / entry * 100 * 50
+            return round(val, 1)
+
+        # RR Calculation
+        risk = abs(entry - sl)
+        reward = abs(entry - tp4)
+        rr = round(reward / risk, 1) if risk > 0 else 0
+
+        # 4. Message Format (ඔයා දුන්න විදිහටම)
+        msg = f"""💎CRYPTO CAMPUS VIP💎
+
+🌑 {coin.replace('/USDT', ' USDT')}
+
+{direction_txt}
+
+🚀Isolated
+📈Leverage 50X
+
+💥Entry {entry}
+
+✅Take Profit
+
+1️⃣ {tp1} ({get_perc(tp1)}%)
+2️⃣ {tp2} ({get_perc(tp2)}%)
+3️⃣ {tp3} ({get_perc(tp3)}%)
+4️⃣ {tp4} ({get_perc(tp4)}%)
+
+⭕ Stop Loss {sl} ({get_perc(sl)}%)
+
+📝 RR 1:{rr}
+
+⚠️ Margin Use 1%-5%(Trading Plan Use)"""
+
+        # 5. Message එක යැවීම
+        await bot.send_message(chat_id=CHANNEL_ID, text=msg)
+        print(f"✅ Signal sent for {coin}")
+        
+    except Exception as e:
+        print(f"Telegram Error: {e}")
 
 # --- MAIN LOOP ---
 async def main():
     candidates = get_top_candidates()
     
-    if not candidates:
-        print("No interesting setups found via Filter.")
-        return
-
     for coin in candidates:
         try:
             analysis_text = await analyze_with_gemini(coin)
-            
-            # JSON clean කරනවා
+            if not analysis_text: continue
+
             cleaned_text = analysis_text.replace("```json", "").replace("```", "").strip()
-            import json
-            data = json.loads(cleaned_text)
             
-            if data['decision'] != "WAIT":
-                # Signal එකක් හම්බුණා!
-                msg = f"🚀 **5-D FUSION SIGNAL** 🚀\n\n" \
-                      f"💎 **{coin}**\n" \
-                      f"Action: {data['decision']}\n" \
-                      f"Entry: {data['entry']}\n" \
-                      f"⛔ SL: {data['stop_loss']}\n" \
-                      f"🎯 TP1: {data['tp1']}\n\n" \
-                      f"Reason: {data['reason']}\n\n" \
-                      f"⚠️ *AI Analysis - DYOR*"
-                
-                await send_signal(msg)
-                print(f"✅ Signal Sent for {coin}")
-            else:
-                print(f"Analysis for {coin}: WAIT")
+            try:
+                data = json.loads(cleaned_text)
+            except:
+                continue
+            
+            # Decision Check
+            decision = data.get('decision', 'WAIT')
+            print(f"{coin}: {decision}")
+            
+            if decision != "WAIT":
+                # Signal එක යවන්න අලුත් Function එකට යවනවා
+                await send_formatted_signal(coin, data)
                 
         except Exception as e:
-            print(f"Error analyzing {coin}: {e}")
+            print(f"Loop Error {coin}: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
