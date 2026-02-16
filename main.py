@@ -45,7 +45,7 @@ if 'last_scan' not in st.session_state:
 
 # --- SETUP API ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash-exp') 
+model = genai.GenerativeModel('gemini-2.0-flash') 
 exchange = ccxt.binanceus()
 
 # --- HELPER FUNCTIONS ---
