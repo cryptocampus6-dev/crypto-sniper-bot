@@ -1,6 +1,9 @@
+streamlit
 ccxt
 pandas
 mplfinance
 google-generativeai
 python-telegram-bot
 pillow
+pytz
+watchdog
