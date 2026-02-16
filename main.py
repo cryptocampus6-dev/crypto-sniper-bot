@@ -1,3 +1,4 @@
+import streamlit as st
 import ccxt
 import pandas as pd
 import mplfinance as mpf
@@ -6,22 +7,52 @@ import asyncio
 import os
 import io
 import json
+import time
+from datetime import datetime
+import pytz
 from telegram import Bot
 
-# --- CONFIGURATION ---
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-CHANNEL_ID = os.environ["TELEGRAM_CHAT_ID"]
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="GHOST VISION X",
+    page_icon="👻",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- SECRETS SETUP ---
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
+    CHANNEL_ID = st.secrets["TELEGRAM_CHAT_ID"]
+except:
+    st.warning("⚠️ Please set up your Secrets in Streamlit Cloud!")
+    st.stop()
+
 STICKER_ID = "CAACAgUAAxkBAAEQZgNpf0jTNnM9QwNCwqMbVuf-AAE0x5oAAvsKAAIWG_BWlMq--iOTVBE4BA"
 
-# Gemini Setup
+# --- INIT SESSION STATE ---
+if 'running' not in st.session_state:
+    st.session_state['running'] = False
+if 'coins' not in st.session_state:
+    st.session_state['coins'] = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+if 'signal_count' not in st.session_state:
+    st.session_state['signal_count'] = 0
+if 'logs' not in st.session_state:
+    st.session_state['logs'] = []
+if 'last_scan' not in st.session_state:
+    st.session_state['last_scan'] = "Waiting to start..."
+
+# --- SETUP API ---
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash-exp') 
-
-# Binance Setup
 exchange = ccxt.binance()
 
-# --- 1. DATA COLLECTION ---
+# --- HELPER FUNCTIONS ---
+def get_sri_lanka_time():
+    tz = pytz.timezone('Asia/Colombo')
+    return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+
 def get_market_data(symbol, timeframe, limit=100):
     bars = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -36,82 +67,90 @@ def generate_chart_image(df, title):
     buf.seek(0)
     return buf
 
-# --- 2. TARGET COINS ---
-def get_top_candidates():
-    # Top 5 Coins
-    return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']
-
-# --- 3. GEMINI ANALYSIS ---
-async def analyze_with_gemini(symbol):
-    print(f"🤖 Analyzing {symbol}...")
+async def send_telegram_msg(msg, sticker=False):
+    bot = Bot(token=TELEGRAM_TOKEN)
     try:
-        df_4h = get_market_data(symbol, '4h')
-        df_1h = get_market_data(symbol, '1h')
-        df_15m = get_market_data(symbol, '15m')
-        df_5m = get_market_data(symbol, '5m')
+        if sticker:
+            await bot.send_sticker(chat_id=CHANNEL_ID, sticker=STICKER_ID)
+            await asyncio.sleep(5)
+        await bot.send_message(chat_id=CHANNEL_ID, text=msg)
+    except Exception as e:
+        st.error(f"Telegram Error: {e}")
+
+async def analyze_coin(coin, log_placeholder, progress_bar):
+    try:
+        # 1. Data Collection
+        df_4h = get_market_data(coin, '4h')
+        df_1h = get_market_data(coin, '1h')
+        df_15m = get_market_data(coin, '15m')
+        df_5m = get_market_data(coin, '5m')
         
-        img_4h = generate_chart_image(df_4h, f"{symbol} 4H")
-        img_1h = generate_chart_image(df_1h, f"{symbol} 1H")
-        img_15m = generate_chart_image(df_15m, f"{symbol} 15m")
-        img_5m = generate_chart_image(df_5m, f"{symbol} 5m")
+        current_price = df_5m.iloc[-1]['close']
         
+        # 2. Image Generation
+        img_4h = generate_chart_image(df_4h, f"{coin} 4H")
+        img_1h = generate_chart_image(df_1h, f"{coin} 1H")
+        img_15m = generate_chart_image(df_15m, f"{coin} 15m")
+        img_5m = generate_chart_image(df_5m, f"{coin} 5m")
+
+        # 3. Gemini Vision Analysis
         prompt = """
-        Role: Expert Crypto Trader using Smart Money Concepts (SMC).
-        Task: Analyze these 4 charts (4H, 1H, 15m, 5m).
-        
+        Role: Expert Crypto Trader (SMC Strategy).
+        Task: Analyze 4 charts for a SCALP entry.
         Output JSON ONLY:
         {
             "decision": "BUY" or "SELL" or "WAIT",
-            "entry": numeric_price,
-            "stop_loss": numeric_price,
-            "tp1": numeric_price,
-            "tp2": numeric_price,
-            "tp3": numeric_price,
-            "tp4": numeric_price
+            "entry": price,
+            "stop_loss": price,
+            "tp1": price,
+            "tp2": price,
+            "tp3": price,
+            "tp4": price,
+            "reason": "Short reason"
         }
         """
-        
         from PIL import Image
         images = [Image.open(img_4h), Image.open(img_1h), Image.open(img_15m), Image.open(img_5m)]
         
         response = model.generate_content([prompt, *images])
-        return response.text
-    except Exception as e:
-        print(f"Analysis Error: {e}")
-        return None
-
-# --- 4. TELEGRAM FUNCTIONS ---
-
-# A. සිග්නල් එකක් ආවම යවන එක
-async def send_formatted_signal(coin, data):
-    bot = Bot(token=TELEGRAM_TOKEN)
-    try:
-        await bot.send_sticker(chat_id=CHANNEL_ID, sticker=STICKER_ID)
-        await asyncio.sleep(5)
+        text = response.text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(text)
         
-        decision = data.get('decision', 'WAIT').upper()
-        entry = float(data.get('entry', 0))
-        sl = float(data.get('stop_loss', 0))
-        tp1 = float(data.get('tp1', entry * 1.01))
-        tp2 = float(data.get('tp2', entry * 1.02))
-        tp3 = float(data.get('tp3', entry * 1.03))
-        tp4 = float(data.get('tp4', entry * 1.04))
-
-        direction_txt = "🔴Short" if decision == "SELL" else "🟢Long"
+        decision = data.get('decision', 'WAIT')
         
-        def calc_profit(target):
-            if entry == 0: return 0.0
-            return round(abs(target - entry) / entry * 100 * 50, 1)
+        # Log Result
+        timestamp = get_sri_lanka_time()
+        
+        if decision == "WAIT":
+             log_entry = f"🕒 {timestamp} | {coin} | WAIT | Price: {current_price}"
+             st.session_state['logs'].insert(0, log_entry)
+        else:
+             # Signal Found!
+             st.session_state['signal_count'] += 1
+             log_entry = f"🚀 {timestamp} | {coin} | **{decision}** | Entry: {data.get('entry')}"
+             st.session_state['logs'].insert(0, log_entry)
+             
+             # Calculate & Send Telegram
+             entry = float(data.get('entry', 0))
+             sl = float(data.get('stop_loss', 0))
+             tp1 = float(data.get('tp1', entry * 1.01))
+             tp2 = float(data.get('tp2', entry * 1.02))
+             tp3 = float(data.get('tp3', entry * 1.03))
+             tp4 = float(data.get('tp4', entry * 1.04))
 
-        risk = abs(entry - sl)
-        reward = abs(entry - tp4)
-        rr = round(reward / risk, 1) if risk > 0 else 0.0
+             def calc_profit(target):
+                 return round(abs(target - entry) / entry * 100 * 50, 1) if entry > 0 else 0
 
-        msg = f"""💎CRYPTO CAMPUS VIP💎
+             risk = abs(entry - sl)
+             reward = abs(entry - tp4)
+             rr = round(reward / risk, 1) if risk > 0 else 0.0
+             emoji = "🔴Short" if decision == "SELL" else "🟢Long"
+             
+             msg = f"""💎CRYPTO CAMPUS VIP💎
 
 🌑 {coin.replace('/USDT', ' USDT')}
 
-{direction_txt}
+{emoji}
 
 🚀Isolated
 📈Leverage 50X
@@ -119,7 +158,6 @@ async def send_formatted_signal(coin, data):
 💥Entry {entry}
 
 ✅Take Profit
-
 1️⃣ {tp1} ({calc_profit(tp1)}%)
 2️⃣ {tp2} ({calc_profit(tp2)}%)
 3️⃣ {tp3} ({calc_profit(tp3)}%)
@@ -130,53 +168,87 @@ async def send_formatted_signal(coin, data):
 📝 RR 1:{rr}
 
 ⚠️ Margin Use 1%-5%(Trading Plan Use)"""
+             
+             await send_telegram_msg(msg, sticker=True)
+             st.toast(f"Signal Sent for {coin}!", icon="🔥")
 
-        await bot.send_message(chat_id=CHANNEL_ID, text=msg)
-        print(f"✅ Signal sent for {coin}")
     except Exception as e:
-        print(f"Telegram Error: {e}")
+        st.error(f"Error analyzing {coin}: {e}")
 
-# B. සිග්නල් නැති වෙලාවට යවන "Heartbeat" එක
-async def send_heartbeat():
-    bot = Bot(token=TELEGRAM_TOKEN)
-    try:
-        msg = "මම ඉන්නවා තුමනි! 🫡\n\n🔎 Market Scanned.\n😴 No Confirm Entries Yet.\n👀 Watching..."
-        await bot.send_message(chat_id=CHANNEL_ID, text=msg)
-        print("💓 Heartbeat sent")
-    except Exception as e:
-        print(f"Heartbeat Error: {e}")
-
-# --- MAIN LOOP ---
-async def main():
-    candidates = get_top_candidates()
-    signals_found = 0
+# --- SIDEBAR UI ---
+with st.sidebar:
+    st.header("🎲 Control Panel")
     
-    for coin in candidates:
-        try:
-            analysis_text = await analyze_with_gemini(coin)
-            if not analysis_text: continue
-
-            cleaned_text = analysis_text.replace("```json", "").replace("```", "").strip()
+    status_color = "green" if st.session_state['running'] else "red"
+    status_text = "RUNNING" if st.session_state['running'] else "STOPPED"
+    st.markdown(f"Status: **:{status_color}[{status_text}]**")
+    
+    st.metric("Daily Signals", f"{st.session_state['signal_count']}/10")
+    
+    col_btn1, col_btn2 = st.columns(2)
+    if col_btn1.button("▶ START", use_container_width=True):
+        st.session_state['running'] = True
+        st.rerun()
+    if col_btn2.button("⏹ STOP", use_container_width=True):
+        st.session_state['running'] = False
+        st.rerun()
+        
+    st.markdown("---")
+    
+    # Coin Manager
+    st.subheader("Coin Manager")
+    new_coin = st.text_input("Add Coin (e.g. DOGE/USDT)")
+    if st.button("Add"):
+        if new_coin and new_coin not in st.session_state['coins']:
+            st.session_state['coins'].append(new_coin)
+            st.success(f"Added {new_coin}")
+    
+    coin_to_remove = st.selectbox("Remove Coin", st.session_state['coins'])
+    if st.button("Delete"):
+        if coin_to_remove in st.session_state['coins']:
+            st.session_state['coins'].remove(coin_to_remove)
+            st.rerun()
             
-            try:
-                data = json.loads(cleaned_text)
-            except:
-                continue
-            
-            decision = data.get('decision', 'WAIT')
-            print(f"{coin}: {decision}")
-            
-            # සිග්නල් එකක් තියෙනවා නම්
-            if decision != "WAIT":
-                await send_formatted_signal(coin, data)
-                signals_found += 1
-                
-        except Exception as e:
-            print(f"Loop Error {coin}: {e}")
+    st.markdown("---")
+    if st.button("🚀 Test Telegram"):
+        asyncio.run(send_telegram_msg("🔔 Test Notification from GHOST VISION X", sticker=False))
+        st.success("Test Sent!")
 
-    # සිග්නල් එකක්වත් තිබුණේ නැත්නම් විතරක් "මම ඉන්නවා" මැසේජ් එක යවන්න
-    if signals_found == 0:
-        await send_heartbeat()
+# --- MAIN DASHBOARD UI ---
+st.title("👻 GHOST VISION X 🚀")
+st.caption(f"🇱🇰 Sri Lanka Time: {get_sri_lanka_time()}")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+tab1, tab2 = st.tabs(["📊 Vision Scanner", "📜 Signal History"])
+
+with tab1:
+    status_container = st.container()
+    
+    if st.session_state['running']:
+        status_container.info("👁️ AI Scanning with Gemini Vision (Pro)...")
+        my_bar = status_container.progress(0)
+        log_placeholder = st.empty()
+        
+        # Scanning Loop logic
+        scan_placeholder = st.empty()
+        
+        with scan_placeholder.container():
+            coins = st.session_state['coins']
+            total_coins = len(coins)
+            
+            for i, coin in enumerate(coins):
+                log_placeholder.markdown(f"**👀 Checking:** `{coin}` ...")
+                asyncio.run(analyze_coin(coin, log_placeholder, my_bar))
+                my_bar.progress((i + 1) / total_coins)
+                time.sleep(1) # Small delay between coins
+            
+            st.success("✅ Cycle Complete. Waiting for next scan...")
+            time.sleep(60) # Wait 1 minute before next loop
+            st.rerun()
+            
+    else:
+        status_container.warning("⚠️ Bot is STOPPED. Click START in the sidebar.")
+
+with tab2:
+    st.subheader("Signal Logs")
+    for log in st.session_state['logs']:
+        st.markdown(log)
