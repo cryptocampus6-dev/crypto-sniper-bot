@@ -45,7 +45,9 @@ if 'last_scan' not in st.session_state:
 
 # --- SETUP API ---
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash') 
+
+# FIX 1: මොඩල් එක 1.5 Flash වලට මාරු කළා (Quota ඉතුරු කරගන්න සහ Error නැතිවෙන්න)
+model = genai.GenerativeModel('gemini-1.5-flash') 
 exchange = ccxt.binanceus()
 
 # --- HELPER FUNCTIONS ---
@@ -237,12 +239,20 @@ with tab1:
             
             for i, coin in enumerate(coins):
                 log_placeholder.markdown(f"**👀 Checking:** `{coin}` ...")
+                
+                # Analyze function
                 asyncio.run(analyze_coin(coin, log_placeholder, my_bar))
+                
+                # Update Progress
                 my_bar.progress((i + 1) / total_coins)
-                time.sleep(1) # Small delay between coins
+                
+                # FIX 2: SPEED BREAKER (තත්පර 30ක විවේකයක්)
+                # මේකෙන් තමයි API Limit වදින එක නවත්තන්නේ
+                log_placeholder.caption(f"💤 Cooling down... (30s) to avoid API limit")
+                time.sleep(30) 
             
             st.success("✅ Cycle Complete. Waiting for next scan...")
-            time.sleep(60) # Wait 1 minute before next loop
+            time.sleep(60) # ඊළඟ වටයට කලින් විනාඩියක් ඉන්න
             st.rerun()
             
     else:
