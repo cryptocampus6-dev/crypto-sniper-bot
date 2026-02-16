@@ -40,13 +40,11 @@ if 'signal_count' not in st.session_state:
     st.session_state['signal_count'] = 0
 if 'logs' not in st.session_state:
     st.session_state['logs'] = []
-if 'last_scan' not in st.session_state:
-    st.session_state['last_scan'] = "Waiting to start..."
 
 # --- SETUP API ---
 genai.configure(api_key=GEMINI_API_KEY)
 
-# FIX 1: මොඩල් එක 1.5 Flash වලට මාරු කළා (Quota ඉතුරු කරගන්න සහ Error නැතිවෙන්න)
+# CORRECT MODEL: 1.5 Flash (Library update එකෙන් පස්සේ මේක වැඩ කරනවා)
 model = genai.GenerativeModel('gemini-1.5-flash') 
 exchange = ccxt.binanceus()
 
@@ -107,8 +105,7 @@ async def analyze_coin(coin, log_placeholder, progress_bar):
             "tp1": price,
             "tp2": price,
             "tp3": price,
-            "tp4": price,
-            "reason": "Short reason"
+            "tp4": price
         }
         """
         from PIL import Image
@@ -127,12 +124,10 @@ async def analyze_coin(coin, log_placeholder, progress_bar):
              log_entry = f"🕒 {timestamp} | {coin} | WAIT | Price: {current_price}"
              st.session_state['logs'].insert(0, log_entry)
         else:
-             # Signal Found!
              st.session_state['signal_count'] += 1
              log_entry = f"🚀 {timestamp} | {coin} | **{decision}** | Entry: {data.get('entry')}"
              st.session_state['logs'].insert(0, log_entry)
              
-             # Calculate & Send Telegram
              entry = float(data.get('entry', 0))
              sl = float(data.get('stop_loss', 0))
              tp1 = float(data.get('tp1', entry * 1.01))
@@ -197,7 +192,6 @@ with st.sidebar:
         
     st.markdown("---")
     
-    # Coin Manager
     st.subheader("Coin Manager")
     new_coin = st.text_input("Add Coin (e.g. DOGE/USDT)")
     if st.button("Add"):
@@ -226,11 +220,10 @@ with tab1:
     status_container = st.container()
     
     if st.session_state['running']:
-        status_container.info("👁️ AI Scanning with Gemini Vision (Pro)...")
+        status_container.info("👁️ AI Scanning with Gemini 1.5 Flash (Fast & Free)...")
         my_bar = status_container.progress(0)
         log_placeholder = st.empty()
         
-        # Scanning Loop logic
         scan_placeholder = st.empty()
         
         with scan_placeholder.container():
@@ -240,19 +233,16 @@ with tab1:
             for i, coin in enumerate(coins):
                 log_placeholder.markdown(f"**👀 Checking:** `{coin}` ...")
                 
-                # Analyze function
                 asyncio.run(analyze_coin(coin, log_placeholder, my_bar))
                 
-                # Update Progress
                 my_bar.progress((i + 1) / total_coins)
                 
-                # FIX 2: SPEED BREAKER (තත්පර 30ක විවේකයක්)
-                # මේකෙන් තමයි API Limit වදින එක නවත්තන්නේ
+                # SPEED BREAKER: API Limit නොවදින්න තත්පර 30ක් ඉන්නවා
                 log_placeholder.caption(f"💤 Cooling down... (30s) to avoid API limit")
                 time.sleep(30) 
             
             st.success("✅ Cycle Complete. Waiting for next scan...")
-            time.sleep(60) # ඊළඟ වටයට කලින් විනාඩියක් ඉන්න
+            time.sleep(60) 
             st.rerun()
             
     else:
