@@ -45,7 +45,7 @@ if 'logs' not in st.session_state:
 genai.configure(api_key=GEMINI_API_KEY)
 
 # CORRECT MODEL: 1.5 Flash (Library update එකෙන් පස්සේ මේක වැඩ කරනවා)
-model = genai.GenerativeModel('gemini-1.5-flash') 
+model = genai.GenerativeModel('gemini-1.5-flash-001') 
 exchange = ccxt.binanceus()
 
 # --- HELPER FUNCTIONS ---
