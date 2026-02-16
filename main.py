@@ -8,12 +8,10 @@ import io
 import json
 from telegram import Bot
 
-# --- CONFIGURATION (Secrets වලින් දත්ත ගනී) ---
+# --- CONFIGURATION ---
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHANNEL_ID = os.environ["TELEGRAM_CHAT_ID"]
-
-# Sticker ID
 STICKER_ID = "CAACAgUAAxkBAAEQZgNpf0jTNnM9QwNCwqMbVuf-AAE0x5oAAvsKAAIWG_BWlMq--iOTVBE4BA"
 
 # Gemini Setup
@@ -23,7 +21,7 @@ model = genai.GenerativeModel('gemini-2.0-flash-exp')
 # Binance Setup
 exchange = ccxt.binance()
 
-# --- 1. DATA COLLECTION & CHARTING ---
+# --- 1. DATA COLLECTION ---
 def get_market_data(symbol, timeframe, limit=100):
     bars = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -38,11 +36,10 @@ def generate_chart_image(df, title):
     buf.seek(0)
     return buf
 
-# --- 2. TARGET LIST (Top 5 Coins) ---
+# --- 2. TARGET COINS ---
 def get_top_candidates():
-    targets = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']
-    print(f"🎯 Targeting: {targets}")
-    return targets
+    # Top 5 Coins
+    return ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT']
 
 # --- 3. GEMINI ANALYSIS ---
 async def analyze_with_gemini(symbol):
@@ -59,10 +56,10 @@ async def analyze_with_gemini(symbol):
         img_5m = generate_chart_image(df_5m, f"{symbol} 5m")
         
         prompt = """
-        Role: Expert Crypto Trader.
-        Task: Analyze charts for a HIGH PROBABILITY entry (Scalp/Day Trade).
+        Role: Expert Crypto Trader using Smart Money Concepts (SMC).
+        Task: Analyze these 4 charts (4H, 1H, 15m, 5m).
         
-        Output JSON ONLY with these exact keys:
+        Output JSON ONLY:
         {
             "decision": "BUY" or "SELL" or "WAIT",
             "entry": numeric_price,
@@ -70,8 +67,7 @@ async def analyze_with_gemini(symbol):
             "tp1": numeric_price,
             "tp2": numeric_price,
             "tp3": numeric_price,
-            "tp4": numeric_price,
-            "reason": "Short reason"
+            "tp4": numeric_price
         }
         """
         
@@ -84,44 +80,36 @@ async def analyze_with_gemini(symbol):
         print(f"Analysis Error: {e}")
         return None
 
-# --- 4. TELEGRAM SENDER ---
+# --- 4. TELEGRAM FUNCTIONS ---
+
+# A. සිග්නල් එකක් ආවම යවන එක
 async def send_formatted_signal(coin, data):
     bot = Bot(token=TELEGRAM_TOKEN)
     try:
-        # Sticker
         await bot.send_sticker(chat_id=CHANNEL_ID, sticker=STICKER_ID)
         await asyncio.sleep(5)
         
-        # Data Prep
         decision = data.get('decision', 'WAIT').upper()
         entry = float(data.get('entry', 0))
         sl = float(data.get('stop_loss', 0))
+        tp1 = float(data.get('tp1', entry * 1.01))
+        tp2 = float(data.get('tp2', entry * 1.02))
+        tp3 = float(data.get('tp3', entry * 1.03))
+        tp4 = float(data.get('tp4', entry * 1.04))
+
+        direction_txt = "🔴Short" if decision == "SELL" else "🟢Long"
         
-        if entry == 0: return
-
-        tp1 = float(data.get('tp1', entry * (1.01 if decision == "BUY" else 0.99)))
-        tp2 = float(data.get('tp2', entry * (1.02 if decision == "BUY" else 0.98)))
-        tp3 = float(data.get('tp3', entry * (1.03 if decision == "BUY" else 0.97)))
-        tp4 = float(data.get('tp4', entry * (1.04 if decision == "BUY" else 0.96)))
-
-        if decision == "SELL":
-            direction_txt = "🔴Short"
-        else:
-            direction_txt = "🟢Long"
-            
-        def get_perc(price):
+        def calc_profit(target):
             if entry == 0: return 0.0
-            val = abs(price - entry) / entry * 100 * 50
-            return round(val, 1)
+            return round(abs(target - entry) / entry * 100 * 50, 1)
 
         risk = abs(entry - sl)
         reward = abs(entry - tp4)
-        rr = round(reward / risk, 1) if risk > 0 else 0
-        coin_display = coin.replace('/USDT', ' USDT')
+        rr = round(reward / risk, 1) if risk > 0 else 0.0
 
         msg = f"""💎CRYPTO CAMPUS VIP💎
 
-🌑 {coin_display}
+🌑 {coin.replace('/USDT', ' USDT')}
 
 {direction_txt}
 
@@ -132,12 +120,12 @@ async def send_formatted_signal(coin, data):
 
 ✅Take Profit
 
-1️⃣ {tp1} ({get_perc(tp1)}%)
-2️⃣ {tp2} ({get_perc(tp2)}%)
-3️⃣ {tp3} ({get_perc(tp3)}%)
-4️⃣ {tp4} ({get_perc(tp4)}%)
+1️⃣ {tp1} ({calc_profit(tp1)}%)
+2️⃣ {tp2} ({calc_profit(tp2)}%)
+3️⃣ {tp3} ({calc_profit(tp3)}%)
+4️⃣ {tp4} ({calc_profit(tp4)}%)
 
-⭕ Stop Loss {sl} ({get_perc(sl)}%)
+⭕ Stop Loss {sl} ({calc_profit(sl)}%)
 
 📝 RR 1:{rr}
 
@@ -145,15 +133,24 @@ async def send_formatted_signal(coin, data):
 
         await bot.send_message(chat_id=CHANNEL_ID, text=msg)
         print(f"✅ Signal sent for {coin}")
-        
     except Exception as e:
         print(f"Telegram Error: {e}")
+
+# B. සිග්නල් නැති වෙලාවට යවන "Heartbeat" එක
+async def send_heartbeat():
+    bot = Bot(token=TELEGRAM_TOKEN)
+    try:
+        msg = "මම ඉන්නවා තුමනි! 🫡\n\n🔎 Market Scanned.\n😴 No Confirm Entries Yet.\n👀 Watching..."
+        await bot.send_message(chat_id=CHANNEL_ID, text=msg)
+        print("💓 Heartbeat sent")
+    except Exception as e:
+        print(f"Heartbeat Error: {e}")
 
 # --- MAIN LOOP ---
 async def main():
     candidates = get_top_candidates()
+    signals_found = 0
     
-    # 1. මාකට් එක Analyze කරනවා
     for coin in candidates:
         try:
             analysis_text = await analyze_with_gemini(coin)
@@ -169,19 +166,17 @@ async def main():
             decision = data.get('decision', 'WAIT')
             print(f"{coin}: {decision}")
             
+            # සිග්නල් එකක් තියෙනවා නම්
             if decision != "WAIT":
                 await send_formatted_signal(coin, data)
+                signals_found += 1
                 
         except Exception as e:
             print(f"Loop Error {coin}: {e}")
 
-    # 2. වැඩේ ඉවර වුණාම Status Update එක යවනවා
-    try:
-        bot = Bot(token=TELEGRAM_TOKEN)
-        await bot.send_message(chat_id=CHANNEL_ID, text="මම ඉන්නවා තුමනි 🫡")
-        print("✅ Status Update Sent!")
-    except Exception as e:
-        print(f"Status Error: {e}")
+    # සිග්නල් එකක්වත් තිබුණේ නැත්නම් විතරක් "මම ඉන්නවා" මැසේජ් එක යවන්න
+    if signals_found == 0:
+        await send_heartbeat()
 
 if __name__ == "__main__":
     asyncio.run(main())
